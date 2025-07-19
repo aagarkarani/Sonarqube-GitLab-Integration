@@ -16,7 +16,6 @@ variables:
   SECURITY_DASHBOARD_SOURCE: Sonar
 
 .fetch_sonarqube: &fetch_sonarqube
-  # Inject your SONAR_TOKEN via GitLab CI/CD secrets or Vault if available
   before_script:
     - echo "SONAR_TOKEN should be set securely in CI/CD settings"
 
@@ -25,13 +24,13 @@ sonarqube-scan:
   image: "$SONAR_MAVEN_IMAGE"
   extends: [.fetch_sonarqube]
   script:
-    - mvn -B -f "$SONAR_POM_FILE" sonar:sonar
-      -Dsonar.projectKey="$SONAR_PROJECT_NAME"
-      -Dsonar.sources="$SONAR_SOURCE_DIR"
-      -Dsonar.host.url="$SONAR_HOST_URL"
-      -Dsonar.login="$SONAR_TOKEN"
-      -Dsonar.exclusions="$SONAR_EXCLUSIONS"
-      -Dsonar.ci="$SONAR_CI_NAME"
+    - mvn -B -f "$SONAR_POM_FILE" sonar:sonar \
+        -Dsonar.projectKey="$SONAR_PROJECT_NAME" \
+        -Dsonar.sources="$SONAR_SOURCE_DIR" \
+        -Dsonar.host.url="$SONAR_HOST_URL" \
+        -Dsonar.login="$SONAR_TOKEN" \
+        -Dsonar.exclusions="$SONAR_EXCLUSIONS" \
+        -Dsonar.ci="$SONAR_CI_NAME"
   artifacts:
     paths:
       - report-task.txt
