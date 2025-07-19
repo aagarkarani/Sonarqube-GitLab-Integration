@@ -1,0 +1,83 @@
+stages:
+  - sonar_scan
+  - quality_gate
+  - sast_conversion
+
+variables:
+  # Customize these based on your project or inject via GitLab CI/CD settings
+  SONAR_MAVEN_IMAGE: maven:3.8.6-openjdk-17
+  SONAR_SOURCE_DIR: src
+  SONAR_POM_FILE: pom.xml
+  SONAR_HOST_URL: https://sonarqube.example.com
+  SONAR_PROJECT_NAME: my-project
+  SONAR_TIMEOUT: "300"
+  SONAR_EXCLUSIONS: "**/test/**,**/docs/**"
+  SONAR_CI_NAME: gitlab-ci
+  SECURITY_DASHBOARD_SOURCE: Sonar
+
+.fetch_sonarqube: &fetch_sonarqube
+  # Inject your SONAR_TOKEN via GitLab CI/CD secrets or Vault if available
+  before_script:
+    - echo "SONAR_TOKEN should be set securely in CI/CD settings"
+
+sonarqube-scan:
+  stage: sonar_scan
+  image: "$SONAR_MAVEN_IMAGE"
+  extends: [.fetch_sonarqube]
+  script:
+    - mvn -B -f "$SONAR_POM_FILE" sonar:sonar
+      -Dsonar.projectKey="$SONAR_PROJECT_NAME"
+      -Dsonar.sources="$SONAR_SOURCE_DIR"
+      -Dsonar.host.url="$SONAR_HOST_URL"
+      -Dsonar.login="$SONAR_TOKEN"
+      -Dsonar.exclusions="$SONAR_EXCLUSIONS"
+      -Dsonar.ci="$SONAR_CI_NAME"
+  artifacts:
+    paths:
+      - report-task.txt
+      - sonar-task-id.txt
+    expire_in: 1 day
+
+quality-gate-check:
+  stage: quality_gate
+  image: curlimages/curl:latest
+  script:
+    - TASK_ID=$(cat sonar-task-id.txt)
+    - echo "Polling SonarQube for Quality Gate status..."
+    - >
+      for i in {1..30}; do
+        STATUS=$(curl -s -u "$SONAR_TOKEN": "$SONAR_HOST_URL/api/ce/task?id=$TASK_ID" | jq -r .task.status);
+        if [[ "$STATUS" == "SUCCESS" ]]; then
+          break;
+        fi;
+        sleep 10;
+      done
+    - ANALYSIS_ID=$(curl -s -u "$SONAR_TOKEN": "$SONAR_HOST_URL/api/ce/task?id=$TASK_ID" | jq -r .task.analysisId)
+    - echo "$ANALYSIS_ID" > analysis-id.txt
+    - >
+      QUALITY_GATE=$(curl -s -u "$SONAR_TOKEN": "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID" | jq -r .projectStatus.status)
+    - echo "Quality Gate Status: $QUALITY_GATE"
+    - if [ "$QUALITY_GATE" != "OK" ]; then exit 1; fi
+  artifacts:
+    paths:
+      - analysis-id.txt
+    expire_in: 1 day
+  dependencies:
+    - sonarqube-scan
+
+convert-sonar-to-sast:
+  stage: sast_conversion
+  image: python:3.10
+  script:
+    - pip install requests
+    - python scripts/sonar_to_gitlab_sast.py "$SONAR_TOKEN" "$SONAR_HOST_URL" "$(cat analysis-id.txt)" > gl-sast-report.json
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+    paths:
+      - gl-sast-report.json
+    expire_in: 1 day
+  dependencies:
+    - quality-gate-check
+  rules:
+    - if: '$SECURITY_DASHBOARD_SOURCE == "Sonar"'
